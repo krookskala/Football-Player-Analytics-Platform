@@ -11,7 +11,7 @@ Football Player Analytics Platform is a thesis driven football analytics project
 
 ## Demo Video
 
-[Watch the demo](assets/demo/demo.mp4)
+[Watch the demo](https://youtu.be/wVZKaQGq3J0)
 
 ## Project Scope
 
