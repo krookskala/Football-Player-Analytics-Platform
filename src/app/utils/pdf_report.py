@@ -1,0 +1,284 @@
+"""
+PDF Report Generation Module
+-----------------------------
+Generate professional PDF reports for player comparisons and cluster analyses.
+"""
+
+from io import BytesIO
+from datetime import datetime
+import pandas as pd
+from typing import List, Dict
+import config
+
+try:
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib import colors
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib.units import inch
+    from reportlab.platypus import (
+        SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle,
+        PageBreak, Image as RLImage
+    )
+    from reportlab.lib.enums import TA_CENTER, TA_LEFT
+    REPORTLAB_AVAILABLE = True
+except ImportError:
+    REPORTLAB_AVAILABLE = False
+
+
+def generate_player_comparison_pdf(
+    players_data: List[Dict],
+    selected_kpis: List[str],
+    position: str
+) -> BytesIO:
+    """
+    Generate PDF report for player comparison.
+
+    Args:
+        players_data: List of player dictionaries with 'name', 'raw', 'percentiles'
+        selected_kpis: List of KPI keys to include
+        position: Position key (e.g., 'midfielder')
+
+    Returns:
+        BytesIO buffer containing PDF
+    """
+    if not REPORTLAB_AVAILABLE:
+        raise ImportError("reportlab is required for PDF export. Install: pip install reportlab")
+
+    buffer = BytesIO()
+    doc = SimpleDocTemplate(
+        buffer,
+        pagesize=A4,
+        rightMargin=72,
+        leftMargin=72,
+        topMargin=72,
+        bottomMargin=18
+    )
+
+    # Container for elements
+    story = []
+    styles = getSampleStyleSheet()
+
+    # Custom styles
+    title_style = ParagraphStyle(
+        'CustomTitle',
+        parent=styles['Heading1'],
+        fontSize=24,
+        textColor=colors.HexColor('#1f77b4'),
+        spaceAfter=30,
+        alignment=TA_CENTER
+    )
+
+    heading_style = ParagraphStyle(
+        'CustomHeading',
+        parent=styles['Heading2'],
+        fontSize=16,
+        textColor=colors.HexColor('#333333'),
+        spaceAfter=12,
+        spaceBefore=12
+    )
+
+    # Title
+    pos_info = config.POSITIONS[position]
+    title = Paragraph(
+        f"Player Comparison Report<br/><font size=14>{pos_info['name']}</font>",
+        title_style
+    )
+    story.append(title)
+    story.append(Spacer(1, 0.2*inch))
+
+    # Report metadata
+    metadata_text = f"""
+    <b>Report Generated:</b> {datetime.now().strftime('%Y-%m-%d %H:%M')}<br/>
+    <b>Number of Players:</b> {len(players_data)}<br/>
+    <b>KPIs Analyzed:</b> {len(selected_kpis)}<br/>
+    <b>Data Source:</b> StatsBomb World Cup 2022
+    """
+    story.append(Paragraph(metadata_text, styles['Normal']))
+    story.append(Spacer(1, 0.3*inch))
+
+    # Player Information Section
+    story.append(Paragraph("Player Information", heading_style))
+
+    for idx, player in enumerate(players_data, 1):
+        player_info = f"""
+        <b>{idx}. {player['name']}</b><br/>
+        Team: {player['raw'].get('team', 'N/A')}<br/>
+        Minutes Played: {player['raw'].get('minutes_played', 0):.0f}<br/>
+        Matches: {player['raw'].get('matches_played', 0):.0f}<br/>
+        Cluster: {player['raw'].get('cluster_label', 'N/A')}
+        """
+        story.append(Paragraph(player_info, styles['Normal']))
+        story.append(Spacer(1, 0.1*inch))
+
+    story.append(Spacer(1, 0.2*inch))
+
+    # KPI Comparison Table
+    story.append(Paragraph("KPI Comparison", heading_style))
+
+    # Prepare table data
+    table_data = [['KPI'] + [p['name'][:20] for p in players_data]]
+
+    for kpi in selected_kpis:
+        readable_name = config.KPI_READABLE_NAMES.get(kpi, kpi)
+        row = [readable_name[:30]]
+
+        for player in players_data:
+            val = player['raw'].get(kpi, 0)
+            pct = player['percentiles'].get(kpi, 0)
+            row.append(f"{val:.2f}\n({pct:.0f}%)")
+
+        table_data.append(row)
+
+    # Create table
+    col_widths = [2.5*inch] + [1.5*inch] * len(players_data)
+    table = Table(table_data, colWidths=col_widths)
+
+    # Table styling
+    table_style = TableStyle([
+        # Header
+        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1f77b4')),
+        ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+        ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+        ('FONTSIZE', (0, 0), (-1, 0), 10),
+        ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+
+        # Body
+        ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
+        ('FONTSIZE', (0, 1), (-1, -1), 8),
+        ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
+        ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#f0f0f0')]),
+        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+        ('LEFTPADDING', (0, 0), (-1, -1), 6),
+        ('RIGHTPADDING', (0, 0), (-1, -1), 6),
+    ])
+
+    table.setStyle(table_style)
+    story.append(table)
+
+    # Footer
+    story.append(Spacer(1, 0.5*inch))
+    footer_text = """
+    <i>This report was generated by the Football Player Analytics Platform.<br/>
+    Methodology: K-Means Clustering + Random Forest Validation<br/>
+    Percentiles calculated relative to all players in the same position.</i>
+    """
+    story.append(Paragraph(footer_text, styles['Normal']))
+
+    # Build PDF
+    doc.build(story)
+    buffer.seek(0)
+    return buffer
+
+
+def generate_cluster_profile_pdf(
+    position: str,
+    cluster_id: int,
+    cluster_info: Dict,
+    players_df: pd.DataFrame,
+    kpis: List[str]
+) -> BytesIO:
+    """
+    Generate PDF report for a specific cluster profile.
+
+    Args:
+        position: Position key
+        cluster_id: Cluster ID
+        cluster_info: Tactical naming and justification
+        players_df: DataFrame of players in this cluster
+        kpis: List of KPIs
+
+    Returns:
+        BytesIO buffer containing PDF
+    """
+    if not REPORTLAB_AVAILABLE:
+        raise ImportError("reportlab is required for PDF export. Install: pip install reportlab")
+
+    buffer = BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=A4)
+    story = []
+    styles = getSampleStyleSheet()
+
+    # Title
+    title_style = ParagraphStyle(
+        'CustomTitle',
+        parent=styles['Heading1'],
+        fontSize=20,
+        textColor=colors.HexColor('#1f77b4'),
+        spaceAfter=20,
+        alignment=TA_CENTER
+    )
+
+    pos_info = config.POSITIONS[position]
+    cluster_name = cluster_info.get('name', f'Cluster {cluster_id}')
+
+    title = Paragraph(
+        f"Cluster Profile Report<br/><font size=14>{pos_info['name']} - {cluster_name}</font>",
+        title_style
+    )
+    story.append(title)
+    story.append(Spacer(1, 0.2*inch))
+
+    # Cluster Description
+    heading_style = ParagraphStyle(
+        'CustomHeading',
+        parent=styles['Heading2'],
+        fontSize=14,
+        textColor=colors.HexColor('#333333'),
+        spaceAfter=10
+    )
+
+    story.append(Paragraph("Cluster Description", heading_style))
+    justification = cluster_info.get('justification', 'No description available.')
+    story.append(Paragraph(justification, styles['Normal']))
+    story.append(Spacer(1, 0.2*inch))
+
+    # Cluster Statistics
+    story.append(Paragraph("Statistics", heading_style))
+    stats_text = f"""
+    <b>Number of Players:</b> {len(players_df)}<br/>
+    <b>Cluster ID:</b> {cluster_id}<br/>
+    <b>Position:</b> {pos_info['name']}
+    """
+    story.append(Paragraph(stats_text, styles['Normal']))
+    story.append(Spacer(1, 0.2*inch))
+
+    # Player List
+    story.append(Paragraph("Players in this Cluster", heading_style))
+
+    # Create player table
+    player_table_data = [['Player', 'Team', 'Minutes', 'Matches']]
+
+    for _, player in players_df.head(20).iterrows():  # Limit to 20 players
+        player_table_data.append([
+            player['player_name'][:30],
+            player.get('team', 'N/A')[:20],
+            f"{player.get('minutes_played', 0):.0f}",
+            f"{player.get('matches_played', 0):.0f}"
+        ])
+
+    player_table = Table(player_table_data, colWidths=[2.5*inch, 1.5*inch, 1*inch, 1*inch])
+    player_table.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1f77b4')),
+        ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+        ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+        ('FONTSIZE', (0, 0), (-1, 0), 9),
+        ('FONTSIZE', (0, 1), (-1, -1), 8),
+        ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
+        ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#f0f0f0')]),
+    ]))
+
+    story.append(player_table)
+
+    if len(players_df) > 20:
+        story.append(Spacer(1, 0.1*inch))
+        story.append(Paragraph(
+            f"<i>Showing 20 of {len(players_df)} players</i>",
+            styles['Normal']
+        ))
+
+    # Build PDF
+    doc.build(story)
+    buffer.seek(0)
+    return buffer
