@@ -1,0 +1,3 @@
+# Cache files generated under the Streamlit app.
+cache/
+!cache/.gitignore
